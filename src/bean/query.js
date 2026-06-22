@@ -1,0 +1,309 @@
+'use strict';
+
+// 京豆列表分页查询与命中规则。
+async function runBatchDispatch() {
+  const source = state && state.requestSource ? state.requestSource : DEFAULT_REQUEST_SOURCE;
+  if (source === REQUEST_SOURCE_KFUAD) return runBatchKfuad();
+  return runBatch();
+}
+
+async function runBatch() {
+  if (state.running) return;
+  if (state.crmData) syncCrmSelectionForRun();
+  if (state.rows.length === 0) return;
+
+  const form = state.beanListForm || findBeanListForm();
+  if (form && !state.beanListForm) state.beanListForm = form;
+  if (!form) {
+    alert('当前页面未找到京豆查询表单，请确认已打开 /tool/beanList 页面。');
+    return;
+  }
+
+  state.running = true;
+  state.stopped = false;
+  state.results = [];
+  if (!state.beanQueryCache) state.beanQueryCache = new Map();
+  clearResultsView();
+  resetStats();
+
+  const rowsForRun = (state.rows || []).slice();
+  state.stats.total = rowsForRun.length;
+  renderStats(true);
+  updateButtons();
+
+  const accountCol = els.accountCol.value;
+  const eventCol = els.eventCol.value;
+  const keyword = DEFAULT_KEYWORD;
+  let timeRange;
+  try {
+    timeRange = getSelectedTimeRange();
+  } catch (err) {
+    alert(err.message || String(err));
+    state.running = false;
+    updateButtons();
+    return;
+  }
+  const uniqueAccounts = countUniqueRunnableAccounts(rowsForRun, accountCol);
+  log(`开始查询：${state.sourceContext ? formatSourceContextForLog(state.sourceContext) : `${rowsForRun.length} 条`}｜账号 ${uniqueAccounts} 个｜并发 ${BEAN_QUERY_CONCURRENCY}`);
+
+  let renderedSinceYield = 0;
+  const processRow = async (inputRow, index) => {
+    if (state.stopped) return;
+    const account = clean(inputRow[accountCol]);
+    const eventNo = clean(inputRow[eventCol]);
+    const trackerName = getTrackerNameFromRow(inputRow);
+    const creator = getRowValueByCandidates(inputRow, CREATOR_COL_CANDIDATES);
+
+    if (shouldIgnoreCreator(creator)) {
+      state.stats.skipped++;
+      renderStats();
+      appendResult({ status: '跳过', eventNo, trackerName, account, beanCreateTime: '', detail: '无需查询' });
+      await yieldAfterResultBatch(++renderedSinceYield);
+      return;
+    }
+    if (!account) {
+      state.stats.skipped++;
+      renderStats();
+      appendResult({ status: '跳过', eventNo, trackerName, account, beanCreateTime: '', detail: '客户账户为空' });
+      await yieldAfterResultBatch(++renderedSinceYield);
+      return;
+    }
+
+    try {
+      log(`查询中：${Math.min(state.stats.done + state.stats.skipped + state.stats.error + 1, rowsForRun.length)}/${rowsForRun.length}`);
+      const matches = await queryAllBeanPagesCached(form, account, keyword, timeRange);
+      if (state.stopped) return;
+      state.stats.done++;
+      if (matches.length) {
+        state.stats.hit += matches.length;
+        for (const m of matches) {
+          appendResult({
+            status: '命中',
+            eventNo,
+            trackerName,
+            account,
+            beanCreateTime: m.createTime,
+            beanAmount: m.amount,
+            businessNo: m.businessNo,
+            businessNo1: m.businessNo1,
+            activityId: m.activityId,
+            activityName: m.activityName,
+            detail: m.detail,
+            sourceLink: m.sourceLink
+          });
+        }
+      } else {
+        state.stats.noHit++;
+        appendResult({ status: '未命中', eventNo, trackerName, account, beanCreateTime: '', detail: NO_BEAN_RECORD_DETAIL });
+      }
+    } catch (err) {
+      state.stats.done++;
+      state.stats.error++;
+      appendResult({ status: '异常', eventNo, trackerName, account, beanCreateTime: '', detail: err.message || String(err) });
+      console.debug('[京豆查询工具] 查询异常：', account, err);
+    }
+    renderStats();
+    await yieldAfterResultBatch(++renderedSinceYield);
+  };
+
+  try {
+    await runConcurrentTasks(rowsForRun, BEAN_QUERY_CONCURRENCY, processRow);
+  } finally {
+    flushResultsNow();
+    await yieldToBrowser();
+    state.running = false;
+    renderStats(true);
+    updateButtons();
+    els.exportBtn.disabled = state.results.filter(r => r.status === '命中').length === 0;
+    const finalText = state.stopped ? '已停止' : '查询完成';
+    log(`${finalText}：命中 ${state.stats.hit}，未命中 ${state.stats.noHit}，异常 ${state.stats.error}，跳过 ${state.stats.skipped}。`);
+  }
+}
+
+function countUniqueRunnableAccounts(rows, accountCol) {
+  const set = new Set();
+  for (const row of rows || []) {
+    const account = clean(row && row[accountCol]);
+    if (account) set.add(account);
+  }
+  return set.size;
+}
+
+function buildBeanQueryCacheKey(account, keyword, timeRange) {
+  const start = timeRange?.start ? timeRange.start.getTime() : '';
+  const end = timeRange?.end ? timeRange.end.getTime() : '';
+  return `${clean(account)}|${clean(keyword)}|${start}|${end}`;
+}
+
+async function queryAllBeanPagesCached(form, account, keyword, timeRange) {
+  if (!state.beanQueryCache) state.beanQueryCache = new Map();
+  const key = buildBeanQueryCacheKey(account, keyword, timeRange);
+  if (state.beanQueryCache.has(key)) return state.beanQueryCache.get(key);
+  const promise = queryAllBeanPages(form, account, keyword, timeRange);
+  state.beanQueryCache.set(key, promise);
+  return promise;
+}
+
+async function queryAllBeanPages(form, account, keyword, timeRange) {
+  const firstHtml = await queryBeanList(form, account, 1);
+  const matches = extractBeanMatches(firstHtml, keyword, timeRange);
+  const totalPages = getTotalPages(firstHtml);
+  const maxPages = Math.min(totalPages, BEAN_QUERY_MAX_PAGES);
+  if (maxPages <= 1 || shouldStopBeanPaging(firstHtml, timeRange)) {
+    if (totalPages > maxPages) console.debug('[京豆查询工具] 页数过多，已限制查询：', account, totalPages, maxPages);
+    return matches;
+  }
+
+  const batchSize = Math.max(1, BEAN_PAGINATION_CONCURRENCY);
+  let nextPage = 2;
+  while (nextPage <= maxPages) {
+    if (state.stopped) break;
+    const batchPages = [];
+    for (let i = 0; i < batchSize && nextPage <= maxPages; i++, nextPage++) {
+      batchPages.push(nextPage);
+    }
+    const results = await Promise.all(batchPages.map(page => queryBeanList(form, account, page).then(html => ({ page, html }))));
+    results.sort((a, b) => a.page - b.page);
+    let earlyStop = false;
+    for (const { html } of results) {
+      matches.push(...extractBeanMatches(html, keyword, timeRange));
+      if (shouldStopBeanPaging(html, timeRange)) earlyStop = true;
+    }
+    if (earlyStop) break;
+    await yieldToBrowser();
+  }
+  if (totalPages > maxPages) console.debug('[京豆查询工具] 页数过多，已限制查询：', account, totalPages, maxPages);
+  return matches;
+}
+
+async function queryBeanList(form, account, pageIndex = 1) {
+  const action = form.action || new URL('/tool/beanList', location.origin).href;
+  const fd = new FormData(form);
+  fd.set('pin', account);
+  fd.set('pageIndex', String(pageIndex));
+
+  const body = new URLSearchParams();
+  for (const [key, val] of fd.entries()) {
+    if (typeof val === 'string') body.append(key, val);
+  }
+  const bodyString = body.toString();
+
+  return runWithRetry(async () => {
+    const res = await fetch(action, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'text/html, */*; q=0.01' },
+      body: bodyString
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const html = await res.text();
+    if (!html || !html.includes('sample-table-2')) {
+      if (html.includes('登录') || html.toLowerCase().includes('login')) throw new Error('可能登录失效或无权限');
+      throw new Error('返回页面未找到京豆列表');
+    }
+    return html;
+  });
+}
+
+function getTotalPages(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const val = doc.querySelector('#totalPage')?.getAttribute('value') || doc.querySelector('#totalPage')?.value || '1';
+  const n = parseInt(val, 10);
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+function extractBeanMatches(html, keyword, timeRange) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const table = doc.querySelector('#sample-table-2') || Array.from(doc.querySelectorAll('table')).find(t => t.textContent.includes('详细说明'));
+  if (!table) throw new Error('未找到结果表');
+
+  const headers = Array.from(table.querySelectorAll('thead th')).map(th => clean(th.textContent));
+  const idx = (names, fallback) => {
+    for (const name of names) {
+      const n = normalizeText(name);
+      const found = headers.findIndex(h => normalizeText(h).includes(n));
+      if (found >= 0) return found;
+    }
+    return fallback;
+  };
+
+  const iBusinessNo = idx(['业务编号'], 0);
+  const iCreateTime = idx(['创建时间'], 1);
+  const iAmount = idx(['收入/支出'], 2);
+  const iActivityId = idx(['活动ID'], 4);
+  const iActivityName = idx(['活动名称'], 5);
+  const iDetail = idx(['详细说明'], 6);
+  const iBusinessNo1 = idx(['业务编号1'], 7);
+
+  const out = [];
+  for (const tr of table.querySelectorAll('tbody tr')) {
+    const cells = Array.from(tr.querySelectorAll('td')).map(td => clean(td.textContent));
+    if (!cells.length) continue;
+    const detail = cells[iDetail] || '';
+    if (!matchesBeanKeyword(detail, keyword)) continue;
+    const createTime = cells[iCreateTime] || '';
+    if (!isCreateTimeInRange(createTime, timeRange)) continue;
+    const link = tr.querySelector('a[href]');
+    out.push({
+      businessNo: cells[iBusinessNo] || '',
+      createTime,
+      amount: cells[iAmount] || '',
+      activityId: cells[iActivityId] || '',
+      activityName: cells[iActivityName] || '',
+      detail,
+      businessNo1: cells[iBusinessNo1] || '',
+      sourceLink: link ? link.href : ''
+    });
+  }
+  return out;
+}
+
+function shouldStopBeanPaging(html, timeRange) {
+  if (!timeRange || !timeRange.start) return false;
+  const times = extractBeanPageCreateTimes(html).filter(Boolean);
+  if (!times.length) return false;
+  // 京豆列表一般按创建时间倒序。当前页全部早于开始时间时，后续页通常更早，可停止继续翻页。
+  return times.every(dt => dt.getTime() < timeRange.start.getTime());
+}
+
+function extractBeanPageCreateTimes(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const table = doc.querySelector('#sample-table-2') || Array.from(doc.querySelectorAll('table')).find(t => t.textContent.includes('创建时间'));
+  if (!table) return [];
+  const headers = Array.from(table.querySelectorAll('thead th')).map(th => clean(th.textContent));
+  let iCreateTime = headers.findIndex(h => normalizeText(h).includes('创建时间'));
+  if (iCreateTime < 0) iCreateTime = 1;
+  return Array.from(table.querySelectorAll('tbody tr')).map(tr => {
+    const cells = Array.from(tr.querySelectorAll('td')).map(td => clean(td.textContent));
+    return parseBeanCreateTime(cells[iCreateTime] || '');
+  });
+}
+
+function isCreateTimeInRange(createTime, range) {
+  if (!range || (!range.start && !range.end)) return true;
+  const parsed = parseBeanCreateTime(createTime);
+  if (!parsed) return false;
+  const ts = parsed.getTime();
+  if (range.start && ts < range.start.getTime()) return false;
+  if (range.end && ts > range.end.getTime()) return false;
+  return true;
+}
+
+function parseBeanCreateTime(v) {
+  const s = clean(v);
+  if (!s) return null;
+  let m = s.match(/(\d{4})[-\/.年](\d{1,2})[-\/.月](\d{1,2})日?\s*(\d{1,2})?:?(\d{1,2})?:?(\d{1,2})?/);
+  if (m) {
+    const [, y, mo, d, h = '0', mi = '0', se = '0'] = m;
+    const dt = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(se));
+    return Number.isFinite(dt.getTime()) ? dt : null;
+  }
+  m = s.match(/(\d{4})(\d{2})(\d{2})\s*(\d{2})?(\d{2})?(\d{2})?/);
+  if (m) {
+    const [, y, mo, d, h = '0', mi = '0', se = '0'] = m;
+    const dt = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(se));
+    return Number.isFinite(dt.getTime()) ? dt : null;
+  }
+  const dt = new Date(s.replace(/-/g, '/'));
+  return Number.isFinite(dt.getTime()) ? dt : null;
+}
