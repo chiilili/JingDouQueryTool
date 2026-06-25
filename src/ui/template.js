@@ -398,6 +398,29 @@ function getPanelTemplate() {
     .filter-empty { padding: 8px; color: #6e6e73; text-align: center; }
     .filter-actions { display: flex; gap: 6px; justify-content: flex-end; }
     .filter-actions button { height: 26px; min-height: 0; padding: 0 10px; font-size: 12px; }
+    .jd-footer {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 0;
+      margin-top: 14px;
+      padding: 12px 6px 2px;
+      border-top: 1px solid rgba(0,0,0,.08);
+      color: #86868b;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .jd-footer a {
+      color: #6e6e73;
+      text-decoration: none;
+      cursor: var(--jdbean-cursor-hand), pointer;
+    }
+    .jd-footer a:hover {
+      color: #1d1d1f;
+      text-decoration: underline;
+    }
+    .jd-footer .sep { margin: 0 8px; color: #c7c7cc; }
     .hidden, .collapsed { display: none !important; }
     @media (max-width: 980px) {
       .panel { width: calc(100vw - 20px); }
@@ -522,6 +545,14 @@ function getPanelTemplate() {
           </table>
         </div>
       </section>
+
+      <footer class="jd-footer" aria-label="页脚信息">
+        <a href="https://github.com/chiilili" target="_blank" rel="noopener noreferrer">2026 © 董昊. All rights reserved.</a>
+        <span class="sep">|</span>
+        <a href="http://status.woaiwusaqi.cn/" target="_blank" rel="noopener noreferrer">服务状态</a>
+        <span class="sep">|</span>
+        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">苏ICP备2025224440号</a>
+      </footer>
     </div>
   </div>
   <button type="button" class="restore-pill hidden" id="restoreBtn">显示京豆查询工具</button>

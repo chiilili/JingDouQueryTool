@@ -3,7 +3,7 @@
 // 全局配置、字段候选与运行态容器。
 const DEFAULT_KEYWORD = '满意度调研发放京豆';
 const EXCLUDED_KEYWORDS = ['在线机器人满意度调研发放京豆'];
-const IGNORED_CREATORS = new Set(['org.jimi', 'robotlara']);
+const IGNORED_CREATORS = new Set();
 const CREATOR_COL_CANDIDATES = ['创建人', '创建人账号', '创建人erp', '创建人ERP', '创建者', '建单人', '登记人', '提交人'];
 const TRACKER_COL_CANDIDATES = ['追踪人', '跟踪人', '跟进人', '追踪客服', '跟踪客服', '处理人', '责任人'];
 const CRM_GROUP_ALL = '__GROUP_ALL__';
