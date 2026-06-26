@@ -1,6 +1,5 @@
 'use strict';
 
-// Shadow DOM 面板模板。
 function getPanelTemplate() {
   return `
   <style>
@@ -312,6 +311,7 @@ function getPanelTemplate() {
     .col-status { width: 84px; }
     .col-event { width: 132px; }
     .col-tracker { width: 96px; }
+    .col-erp { width: 110px; }
     .col-account { width: 150px; }
     .col-time { width: 158px; }
     .col-detail { width: 320px; }
@@ -527,6 +527,7 @@ function getPanelTemplate() {
               <col class="col-status" />
               <col class="col-event" />
               <col class="col-tracker" />
+              <col class="col-erp" />
               <col class="col-account" />
               <col class="col-time" />
               <col class="col-detail" />
@@ -536,6 +537,7 @@ function getPanelTemplate() {
                 <th data-col-key="status"><div class="th-cell"><span class="th-text">状态</span><button type="button" class="th-filter" data-col-key="status" title="筛选" aria-label="筛选 状态">▾</button></div></th>
                 <th data-col-key="eventNo"><div class="th-cell"><span class="th-text">事件号</span><button type="button" class="th-filter" data-col-key="eventNo" title="筛选" aria-label="筛选 事件号">▾</button></div></th>
                 <th data-col-key="trackerName"><div class="th-cell"><span class="th-text">追踪人</span><button type="button" class="th-filter" data-col-key="trackerName" title="筛选" aria-label="筛选 追踪人">▾</button></div></th>
+                <th data-col-key="trackerErp"><div class="th-cell"><span class="th-text">ERP</span><button type="button" class="th-filter" data-col-key="trackerErp" title="筛选" aria-label="筛选 ERP">▾</button></div></th>
                 <th data-col-key="account"><div class="th-cell"><span class="th-text">客户账户</span><button type="button" class="th-filter" data-col-key="account" title="筛选" aria-label="筛选 客户账户">▾</button></div></th>
                 <th data-col-key="beanCreateTime"><div class="th-cell"><span class="th-text">京豆创建时间</span><button type="button" class="th-filter" data-col-key="beanCreateTime" title="筛选" aria-label="筛选 京豆创建时间">▾</button></div></th>
                 <th data-col-key="detail">详细说明</th>

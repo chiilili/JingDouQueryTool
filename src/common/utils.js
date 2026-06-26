@@ -1,6 +1,5 @@
 'use strict';
 
-// 通用文本、日期与转义工具。
 function unique(arr) {
   return Array.from(new Set((arr || []).map(x => clean(x)).filter(Boolean)));
 }
@@ -115,12 +114,10 @@ async function runConcurrentTasks(items, limit, worker) {
   await Promise.all(workers);
 }
 
-
 function formatDateOnly(d) {
   const pad = n => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
-
 
 function formatDateTimeSeconds(d) {
   const pad = n => String(n).padStart(2, '0');
@@ -153,9 +150,8 @@ function escapeRegExp(str) {
 }
 
 function escapeHtml(v) {
-  return String(v ?? '').replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+  return String(v ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 }
-
 
 function nextAnimationFrame() {
   return new Promise(resolve => {

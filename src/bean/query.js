@@ -1,6 +1,5 @@
 'use strict';
 
-// 京豆列表分页查询与命中规则。
 async function runBatchDispatch() {
   const source = state && state.requestSource ? state.requestSource : DEFAULT_REQUEST_SOURCE;
   if (source === REQUEST_SOURCE_KFUAD) return runBatchKfuad();
@@ -52,19 +51,20 @@ async function runBatch() {
     const account = clean(inputRow[accountCol]);
     const eventNo = clean(inputRow[eventCol]);
     const trackerName = getTrackerNameFromRow(inputRow);
+    const trackerErp = getTrackerErpFromRow(inputRow);
     const creator = getRowValueByCandidates(inputRow, CREATOR_COL_CANDIDATES);
 
     if (shouldIgnoreCreator(creator)) {
       state.stats.skipped++;
       renderStats();
-      appendResult({ status: '跳过', eventNo, trackerName, account, beanCreateTime: '', detail: '无需查询' });
+      appendResult({ status: '跳过', eventNo, trackerName, trackerErp, account, beanCreateTime: '', detail: '无需查询' });
       await yieldAfterResultBatch(++renderedSinceYield);
       return;
     }
     if (!account) {
       state.stats.skipped++;
       renderStats();
-      appendResult({ status: '跳过', eventNo, trackerName, account, beanCreateTime: '', detail: '客户账户为空' });
+      appendResult({ status: '跳过', eventNo, trackerName, trackerErp, account, beanCreateTime: '', detail: '客户账户为空' });
       await yieldAfterResultBatch(++renderedSinceYield);
       return;
     }
@@ -80,7 +80,7 @@ async function runBatch() {
           appendResult({
             status: '命中',
             eventNo,
-            trackerName,
+            trackerName, trackerErp,
             account,
             beanCreateTime: m.createTime,
             beanAmount: m.amount,
@@ -94,12 +94,12 @@ async function runBatch() {
         }
       } else {
         state.stats.noHit++;
-        appendResult({ status: '未命中', eventNo, trackerName, account, beanCreateTime: '', detail: NO_BEAN_RECORD_DETAIL });
+        appendResult({ status: '未命中', eventNo, trackerName, trackerErp, account, beanCreateTime: '', detail: NO_BEAN_RECORD_DETAIL });
       }
     } catch (err) {
       state.stats.done++;
       state.stats.error++;
-      appendResult({ status: '异常', eventNo, trackerName, account, beanCreateTime: '', detail: err.message || String(err) });
+      appendResult({ status: '异常', eventNo, trackerName, trackerErp, account, beanCreateTime: '', detail: err.message || String(err) });
       console.debug('[京豆查询工具] 查询异常：', account, err);
     }
     renderStats();
@@ -140,6 +140,9 @@ async function queryAllBeanPagesCached(form, account, keyword, timeRange) {
   const key = buildBeanQueryCacheKey(account, keyword, timeRange);
   if (state.beanQueryCache.has(key)) return state.beanQueryCache.get(key);
   const promise = queryAllBeanPages(form, account, keyword, timeRange);
+  promise.catch(() => {
+    if (state.beanQueryCache.get(key) === promise) state.beanQueryCache.delete(key);
+  });
   state.beanQueryCache.set(key, promise);
   return promise;
 }
@@ -262,7 +265,6 @@ function shouldStopBeanPaging(html, timeRange) {
   if (!timeRange || !timeRange.start) return false;
   const times = extractBeanPageCreateTimes(html).filter(Boolean);
   if (!times.length) return false;
-  // 京豆列表一般按创建时间倒序。当前页全部早于开始时间时，后续页通常更早，可停止继续翻页。
   return times.every(dt => dt.getTime() < timeRange.start.getTime());
 }
 

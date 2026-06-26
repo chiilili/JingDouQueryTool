@@ -1,7 +1,5 @@
 'use strict';
 
-// 面板生命周期：创建 Shadow DOM、绑定元素、初始化事件。
-
 function initJdBeanTool() {
   if (document.getElementById('jdbean-tool-host')) return;
 
@@ -73,8 +71,6 @@ function installStandaloneHomePageMode() {
     state.beanListForm = preservedForm;
   }
 
-  // 视觉和交互上清空原站点内容，只保留一个隐藏的请求表单副本。
-  // 这样页面不会再渲染原始大表格/脚本区域，性能更稳定；查询接口仍能复用原表单参数。
   while (document.body.firstChild) document.body.removeChild(document.body.firstChild);
   document.body.appendChild(originalPageCache);
 
@@ -135,8 +131,6 @@ function cloneBeanListFormForRequests(form) {
 }
 
 function installScopedCursorStyle() {
-  // 只在插件 Shadow DOM 内使用自定义光标。不要给宿主页面 body * 注入全局样式，
-  // 否则 CRM / 京豆列表这类大页面会产生大量样式重算，导致滚动和点击卡顿。
   const arrowCursor = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cpath d='M5 3.5L21.5 18.6l-8.2 1.1 4.3 7.3-3.1 1.8-4.4-7.5-5.1 5.1z' fill='white' stroke='black' stroke-width='1.45' stroke-linejoin='round'/%3E%3C/svg%3E") 5 3`;
   const handCursor = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cpath d='M12.8 28.5c-1.4-1.4-3.8-4.2-5.1-6.4-.7-1.2-.4-2.4.6-2.9.9-.5 1.8-.2 2.6.6l1 1V8.6a1.8 1.8 0 0 1 3.6 0v7.7h.5v-2.5a1.8 1.8 0 0 1 3.6 0v2.5h.5v-1.8a1.8 1.8 0 0 1 3.6 0v2.5h.4a1.8 1.8 0 0 1 3.5.5v4.3c0 3.7-2.9 6.7-6.6 6.7z' fill='white' stroke='black' stroke-width='1.35' stroke-linejoin='round'/%3E%3C/svg%3E") 13 7`;
   if (root && root.host) {

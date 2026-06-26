@@ -1,6 +1,5 @@
 'use strict';
 
-// CRM 明细页本地导出能力。
 function isCrmMonitorPage() {
   return location.hostname === 'crm.jd.com' && location.pathname.indexOf('/monitor/monitorCaseInfo/monitorDetail') >= 0;
 }
@@ -8,8 +7,11 @@ function isCrmMonitorPage() {
 function findCrmBusinessGroupSpan(doc = document) {
   const preferred = doc.getElementById('businessGroupTreeData_1_span');
   if (preferred) return preferred;
-  const spans = Array.from(doc.querySelectorAll('[id^="businessGroupTreeData_"][id$="_span"], span'));
-  return spans.find(el => /家电家居升级/.test(clean(el.textContent))) || null;
+  const treeSpans = Array.from(doc.querySelectorAll('[id^="businessGroupTreeData_"][id$="_span"]'));
+  const labeled = treeSpans.find(el => /组$/.test(clean(el.textContent)));
+  if (labeled) return labeled;
+  if (treeSpans.length) return treeSpans.find(el => clean(el.textContent)) || treeSpans[0];
+  return Array.from(doc.querySelectorAll('span')).find(el => /组$/.test(clean(el.textContent))) || null;
 }
 
 function findCrmCaseCloseLink(doc = document) {
@@ -53,8 +55,6 @@ function resolveCrmBusinessGroupInfo(doc = document, htmlText = '') {
 
 function findLikelyBusinessGroupLabel(html) {
   const text = String(html || '');
-  const preferred = text.match(/[\u4e00-\u9fa5A-Za-z0-9_-]{2,30}升级[一二三四五六七八九十0-9]+组/);
-  if (preferred) return clean(preferred[0]);
   const group = text.match(/[\u4e00-\u9fa5A-Za-z0-9_-]{2,30}组/);
   return group ? clean(group[0]) : '';
 }
@@ -233,26 +233,6 @@ async function exportCrmMonitorTableToLocal(btn) {
   }
 }
 
-function getCrmMonitorParams() {
-  const params = {};
-  const search = new URLSearchParams(location.search);
-  for (const [key, value] of search.entries()) params[key] = value;
-
-  const keys = ['flag', 'parDeptId', 'curDeptId', 'userPin', 'master', 'funName', 'caseType', 'closeBeg', 'closeEnd', 'beginTimeStr', 'remindBizType'];
-  const scripts = Array.from(document.scripts).map(s => s.textContent || '').join('\n');
-  for (const key of keys) {
-    if (params[key] !== undefined) continue;
-    const re = new RegExp(key + "\\s*:\\s*[\"']([^\"']*)[\"']");
-    const m = scripts.match(re);
-    params[key] = m ? m[1] : '';
-  }
-  return params;
-}
-
-function getCrmTotalCount() {
-  return getCrmTotalCountFromDoc(document);
-}
-
 function getCrmTotalCountFromDoc(doc) {
   const pageText = Array.from(doc.querySelectorAll('.page, .buttonLabel'))
     .map(el => el.textContent || '')
@@ -280,7 +260,6 @@ function getPreferredCrmPageSizeFromDoc(doc) {
     .map(opt => Number(opt.value || opt.textContent || 0))
     .filter(n => Number.isFinite(n) && n > 0);
   const max = nums.length ? Math.max(...nums) : 100;
-  // CRM页面可选最大通常是100。不要用 total 当 pageSize，避免服务端分页失效或被截断。
   return Math.min(Math.max(max, 10), 100);
 }
 

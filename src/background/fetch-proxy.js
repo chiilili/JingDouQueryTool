@@ -1,6 +1,5 @@
 'use strict';
 
-// 跨域文本请求代理，仅允许访问白名单来源。
 const ALLOWED_FETCH_ORIGINS = new Set([
   'https://crm.jd.com',
   'http://newadmin.jpos.jd.com',
@@ -14,7 +13,6 @@ function normalizeCredentialsMode(value, fallback) {
 }
 
 function inferCredentialsMode(url) {
-  // 静态 CDN 资源不需要携带 cookie；携带凭据会和 Access-Control-Allow-Origin: * 冲突。
   if (url.hostname === 'storage.360buyimg.com') return 'omit';
   return 'include';
 }

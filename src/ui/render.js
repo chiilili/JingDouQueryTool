@@ -1,7 +1,5 @@
 'use strict';
 
-// 面板渲染、状态展示、列识别和交互辅助。
-
 function renderRuntimeTitle() {
   if (!els || !els.runtimeTitle) return;
   const envText = 'Manifest V3';
@@ -108,8 +106,6 @@ function detectColumn(headers, candidates) {
   }
   return '';
 }
-
-
 
 function refreshCrmDateRangeOptions() {
   if (!els || !els.crmDateRange) return;
@@ -301,6 +297,7 @@ const RESULT_COLUMNS = [
   { key: 'status', label: '状态' },
   { key: 'eventNo', label: '事件号' },
   { key: 'trackerName', label: '追踪人' },
+  { key: 'trackerErp', label: 'ERP' },
   { key: 'account', label: '客户账户' },
   { key: 'beanCreateTime', label: '京豆创建时间' }
 ];
@@ -462,6 +459,7 @@ function buildResultRowHtml(item) {
       <td title="${escapeHtml(status)}"><span class="badge ${badgeClass}">${escapeHtml(status)}</span></td>
       ${buildCompactCell(item.eventNo || '')}
       ${buildCompactCell(item.trackerName || '')}
+      ${buildCompactCell(item.trackerErp || '')}
       ${buildCompactCell(item.account || '')}
       ${buildCompactCell(item.beanCreateTime || '')}
       ${buildCompactCell(item.detail || '', '', true)}

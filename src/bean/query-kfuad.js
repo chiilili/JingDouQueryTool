@@ -1,10 +1,5 @@
 'use strict';
 
-// kfuad（新接口）京豆明细查询。
-// POST http://kfuad.jd.com/platformApi/api/jingdou/detailBeans?lang=zh_CN
-// 请求体：{"pin":"<账号>","dataSource":"1","detailType":null,"beginDate":<ms>,"endDate":<ms>,"pageNo":N,"pageSize":20}
-// 命中规则：userVisibleInfo 或 memo 命中关键字，且 createDate 在用户指定的时间范围内。
-
 async function runBatchKfuad() {
   if (state.running) return;
   if (state.crmData) syncCrmSelectionForRun();
@@ -49,19 +44,20 @@ async function runBatchKfuad() {
     const account = clean(inputRow[accountCol]);
     const eventNo = clean(inputRow[eventCol]);
     const trackerName = getTrackerNameFromRow(inputRow);
+    const trackerErp = getTrackerErpFromRow(inputRow);
     const creator = getRowValueByCandidates(inputRow, CREATOR_COL_CANDIDATES);
 
     if (shouldIgnoreCreator(creator)) {
       state.stats.skipped++;
       renderStats();
-      appendResult({ status: '跳过', eventNo, trackerName, account, beanCreateTime: '', detail: '无需查询' });
+      appendResult({ status: '跳过', eventNo, trackerName, trackerErp, account, beanCreateTime: '', detail: '无需查询' });
       await yieldAfterResultBatch(++renderedSinceYield);
       return;
     }
     if (!account) {
       state.stats.skipped++;
       renderStats();
-      appendResult({ status: '跳过', eventNo, trackerName, account, beanCreateTime: '', detail: '客户账户为空' });
+      appendResult({ status: '跳过', eventNo, trackerName, trackerErp, account, beanCreateTime: '', detail: '客户账户为空' });
       await yieldAfterResultBatch(++renderedSinceYield);
       return;
     }
@@ -77,7 +73,7 @@ async function runBatchKfuad() {
           appendResult({
             status: '命中',
             eventNo,
-            trackerName,
+            trackerName, trackerErp,
             account,
             beanCreateTime: m.createTime,
             beanAmount: m.amount,
@@ -91,12 +87,12 @@ async function runBatchKfuad() {
         }
       } else {
         state.stats.noHit++;
-        appendResult({ status: '未命中', eventNo, trackerName, account, beanCreateTime: '', detail: NO_BEAN_RECORD_DETAIL });
+        appendResult({ status: '未命中', eventNo, trackerName, trackerErp, account, beanCreateTime: '', detail: NO_BEAN_RECORD_DETAIL });
       }
     } catch (err) {
       state.stats.done++;
       state.stats.error++;
-      appendResult({ status: '异常', eventNo, trackerName, account, beanCreateTime: '', detail: err.message || String(err) });
+      appendResult({ status: '异常', eventNo, trackerName, trackerErp, account, beanCreateTime: '', detail: err.message || String(err) });
       console.debug('[京豆查询工具] kfuad 查询异常：', account, err);
     }
     renderStats();
@@ -128,6 +124,9 @@ async function queryAllKfuadPagesCached(account, keyword, timeRange) {
   const key = buildKfuadCacheKey(account, keyword, timeRange);
   if (state.beanQueryCache.has(key)) return state.beanQueryCache.get(key);
   const promise = queryAllKfuadPages(account, keyword, timeRange);
+  promise.catch(() => {
+    if (state.beanQueryCache.get(key) === promise) state.beanQueryCache.delete(key);
+  });
   state.beanQueryCache.set(key, promise);
   return promise;
 }
@@ -147,7 +146,6 @@ async function queryAllKfuadPages(account, keyword, timeRange) {
       const createMs = Number(item?.createDate || 0);
       const inRange = createMs >= beginMs && createMs <= endMs;
       if (!inRange) {
-        // 列表按 createDate 倒序，本页有早于开始时间的记录就可以停止后续翻页。
         if (createMs > 0 && createMs < beginMs) earlyStop = true;
         continue;
       }

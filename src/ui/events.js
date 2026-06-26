@@ -1,6 +1,5 @@
 'use strict';
 
-// 面板事件绑定。
 function bindPanelEvents() {
   els.startBtn.addEventListener('click', () => runBatchDispatch().catch(err => {
     console.error(err);
@@ -131,7 +130,6 @@ function bindFilterEvents() {
   els.filterPopoverCancel.addEventListener('click', () => closeFilterPopover());
   els.filterPopoverClear.addEventListener('click', () => clearFilterForCurrentColumn());
 
-  // Click outside the popover closes it.
   root.addEventListener('click', e => {
     if (els.filterPopover.classList.contains('hidden')) return;
     if (els.filterPopover.contains(e.target)) return;
@@ -181,4 +179,3 @@ function restorePanelFromPill() {
   els.panel.classList.remove('hidden');
   els.restoreBtn.classList.add('hidden');
 }
-

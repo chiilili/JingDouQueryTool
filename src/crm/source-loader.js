@@ -1,6 +1,5 @@
 'use strict';
 
-// CRM 数据来源发现、分页抓取、行数据清洗。
 async function loadCrmSourceData() {
   els.loadCrmBtn.disabled = true;
   els.loadCrmBtn.classList.add('btn-loading');
@@ -32,6 +31,7 @@ async function loadCrmSourceData() {
     const rows = creatorInfo.rows.map(row => {
       const copy = { ...row };
       copy.__trackerName = trackerCol ? extractTrackerChineseName(row[trackerCol]) : '';
+      copy.__trackerErp = trackerCol ? extractTrackerErp(row[trackerCol]) : '';
       return copy;
     });
     state.crmData = {
@@ -136,7 +136,6 @@ async function resolveCrmDetailUrlFromBusinessMonitorHtml(rangeInfo = getCrmDate
           return { url: buildCrmCaseCloseDetailUrl(hit.deptId, rangeInfo.beginTimeStr), label: hit.label || label, count: groupInfo.count || '', parDeptId: hit.deptId };
         }
       } catch (err) {
-        // 接口探测允许404/405/权限差异，继续尝试下一个候选。
       }
     }
   }
@@ -182,7 +181,6 @@ async function collectBusinessMonitorScripts(doc, baseUrl) {
         out.push({ name: `script ${abs}`, url: abs, text });
       }
     } catch (err) {
-      // 脚本读取失败不终止主流程。
     }
   }
   return out;
@@ -289,14 +287,12 @@ function extractDeptCandidatesFromStructuredText(text, expectedLabel = '', sourc
 
   if (parsed.ok) visit(parsed.value);
 
-  // 兼容“JSON包在回调/变量赋值里”的情况。
   const arrayOrObjectBlocks = raw.match(/(?:\[[\s\S]{0,20000}\]|\{[\s\S]{0,20000}\})/g) || [];
   for (const block of arrayOrObjectBlocks.slice(0, 20)) {
     const p = parseLooseJsonPayload(block);
     if (p.ok) visit(p.value);
   }
 
-  // 兼容普通JS对象片段，按“名称附近ID”兜底。
   const groupLabel = clean(expectedLabel);
   const labelRegex = groupLabel ? escapeRegExp(groupLabel) : '[\\u4e00-\\u9fa5A-Za-z0-9_-]{2,30}组';
   const nearRe = new RegExp(`.{0,600}${labelRegex}.{0,600}`, 'g');
@@ -346,9 +342,7 @@ function scoreDeptCandidate(label, expectedLabel, sourceName) {
   if (/tree|businessgroup|dept|org|organ/.test(source)) score += 20;
   if (e && l === e) score += 100;
   else if (e && l && (l.includes(e) || e.includes(l))) score += 80;
-  if (/升级[一二三四五六七八九十0-9]+组/.test(l)) score += 45;
-  else if (/组$/.test(l)) score += 25;
-  if (/家电家居/.test(l)) score += 10;
+  if (/组$/.test(l)) score += 25;
   return score;
 }
 
@@ -388,8 +382,6 @@ async function fetchCrmRowsFromDetailUrl(detailUrl, onProgress) {
   let total = getCrmTotalCountFromDoc(firstDoc);
   let pageSize = getCurrentCrmPageSizeFromDoc(firstDoc) || configuredPageSize;
 
-  // 详情页经常只是壳页面，真实数据由 /monitorCommon 异步返回。
-  // 因此即使详情页没有 #monitorlist，也直接用已识别参数请求第一页数据。
   if (!firstParsed.rows.length || !hasCrmRequiredHeader(firstParsed.headers)) {
     pageSize = configuredPageSize;
     onProgress && onProgress(1, 1, total);
@@ -500,6 +492,20 @@ function getTrackerNameFromRow(row) {
   return extractTrackerChineseName(raw);
 }
 
+function extractTrackerErp(value) {
+  const s = clean(value);
+  if (!s) return '';
+  const m = s.match(/[A-Za-z][A-Za-z0-9_.]*/);
+  return m ? m[0] : '';
+}
+
+function getTrackerErpFromRow(row) {
+  const cached = clean(row?.__trackerErp);
+  if (cached) return cached;
+  const raw = getRowValueByCandidates(row, TRACKER_COL_CANDIDATES);
+  return extractTrackerErp(raw);
+}
+
 function describeCrmDateFromUrl(url, rangeInfo = null) {
   if (rangeInfo?.statusDateText) return rangeInfo.statusDateText;
   const begin = url.searchParams.get('beginTimeStr') || '';
@@ -541,7 +547,6 @@ function normalizeCredentialsMode(value, fallback = 'include') {
 
 function getCredentialsModeForUrl(url) {
   const target = url instanceof URL ? url : new URL(url, location.href);
-  // 360buyimg 静态资源使用 Access-Control-Allow-Origin: *，不能与 credentials: include 同用。
   if (target.hostname === 'storage.360buyimg.com') return 'omit';
   return 'include';
 }

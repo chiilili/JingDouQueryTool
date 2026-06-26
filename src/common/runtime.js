@@ -1,8 +1,5 @@
 'use strict';
 
-// Chrome Extension 运行时通信保护。
-// 说明：扩展被重新加载、更新或停用后，页面中旧的 content script 仍可能继续执行；
-// 此时访问 chrome.runtime 会抛出 "Extension context invalidated"。
 const EXTENSION_CONTEXT_INVALIDATED_TEXT = '插件上下文已失效。通常是扩展被重新加载、更新或停用后，当前页面仍在运行旧脚本。请刷新当前京豆页面后重新查询。';
 
 function isExtensionContextInvalidatedText(value) {

@@ -1,6 +1,5 @@
 'use strict';
 
-// 查询结果 CSV 导出。
 function exportHitsCsv() {
   const allHits = state.results.filter(r => r.status === '命中');
   const hits = allHits.filter(r => rowPassesFilters(r));
@@ -15,10 +14,11 @@ function exportHitsCsv() {
   if (hits.length < allHits.length) {
     log(`按当前筛选导出 ${hits.length}/${allHits.length} 条命中。`);
   }
-  const headers = ['事件号', '追踪人', '客户账户', '京豆创建时间', '京豆数量', '业务编号', '业务编号1', '活动ID', '活动名称', '详细说明', '溯源链接'];
+  const headers = ['事件号', '追踪人', 'ERP', '客户账户', '京豆创建时间', '京豆数量', '业务编号', '业务编号1', '活动ID', '活动名称', '详细说明', '溯源链接'];
   const rows = hits.map(r => [
     r.eventNo || '',
     r.trackerName || '',
+    r.trackerErp || '',
     r.account || '',
     r.beanCreateTime || '',
     r.beanAmount || '',
@@ -42,7 +42,8 @@ function exportHitsCsv() {
 }
 
 function csvCell(v) {
-  const s = String(v ?? '');
+  let s = String(v ?? '');
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   return `"${s.replace(/"/g, '""')}"`;
 }
 

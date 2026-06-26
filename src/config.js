@@ -1,6 +1,5 @@
 'use strict';
 
-// 全局配置、字段候选与运行态容器。
 const DEFAULT_KEYWORD = '满意度调研发放京豆';
 const EXCLUDED_KEYWORDS = ['在线机器人满意度调研发放京豆'];
 const IGNORED_CREATORS = new Set();
