@@ -379,6 +379,7 @@ function closeFilterPopover() {
   state.filterPopoverCol = null;
   state.filterPopoverEntries = null;
   state.filterPopoverSelected = null;
+  state.filterPopoverVisibleValues = null;
 }
 
 function renderFilterPopoverList(searchText) {
@@ -389,6 +390,7 @@ function renderFilterPopoverList(searchText) {
   const filtered = search ? entries.filter(([v]) => v.toLowerCase().includes(search)) : entries;
   const selected = state.filterPopoverSelected;
   const allChecked = filtered.length > 0 && filtered.every(([v]) => selected.has(v));
+  state.filterPopoverVisibleValues = filtered.map(([v]) => v);
 
   let html = `<label class="filter-item filter-item-all"><input type="checkbox" data-all="1"${allChecked ? ' checked' : ''}><span class="filter-item-text">(全选)</span></label>`;
   filtered.forEach(([v, count], idx) => {
@@ -398,17 +400,10 @@ function renderFilterPopoverList(searchText) {
   });
   if (!filtered.length) html += '<div class="filter-empty">(无匹配项)</div>';
   list.innerHTML = html;
-  list.dataset.filteredKeys = JSON.stringify(filtered.map(([v]) => v));
 }
 
 function getCurrentFilteredEntryValues() {
-  const list = els.filterPopoverList;
-  if (!list || !list.dataset.filteredKeys) return [];
-  try {
-    return JSON.parse(list.dataset.filteredKeys);
-  } catch (_err) {
-    return [];
-  }
+  return Array.isArray(state.filterPopoverVisibleValues) ? state.filterPopoverVisibleValues : [];
 }
 
 function positionFilterPopover(anchor) {

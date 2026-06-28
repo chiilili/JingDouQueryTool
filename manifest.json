@@ -6,7 +6,6 @@
   "permissions": [],
   "host_permissions": [
     "http://newadmin.jpos.jd.com/*",
-    "http://kfuad.jd.com/*",
     "https://kfuad.jd.com/*",
     "https://crm.jd.com/*",
     "https://storage.360buyimg.com/*"

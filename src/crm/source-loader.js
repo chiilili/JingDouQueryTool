@@ -1,6 +1,10 @@
 'use strict';
 
 async function loadCrmSourceData() {
+  const previousStartDisabled = els.startBtn.disabled;
+  const previousExportDisabled = els.exportBtn.disabled;
+  let committed = false;
+
   els.loadCrmBtn.disabled = true;
   els.loadCrmBtn.classList.add('btn-loading');
   els.loadCrmBtn.textContent = '读取中';
@@ -50,12 +54,18 @@ async function loadCrmSourceData() {
     applyCrmPersonSelection();
     log(`${dateText}｜可查询 ${rows.length} 条`);
     if (!trackerCol) console.debug('[京豆查询工具] 未识别到追踪人列，只能按整组查询。');
+    committed = true;
   } finally {
     els.loadCrmBtn.disabled = false;
     els.loadCrmBtn.classList.remove('btn-loading');
     els.loadCrmBtn.textContent = '获取数据';
     els.detectStatus.classList.remove('loading');
     if (els.crmDateRange) els.crmDateRange.disabled = false;
+    if (!committed) {
+      updateButtons();
+      els.startBtn.disabled = previousStartDisabled || state.running || !state.rows.length;
+      els.exportBtn.disabled = previousExportDisabled;
+    }
   }
 }
 

@@ -17,7 +17,7 @@ const CRM_DATE_RANGE_YESTERDAY_TODAY = 'yesterday_today';
 const REQUEST_SOURCE_JPOS = 'jpos';
 const REQUEST_SOURCE_KFUAD = 'kfuad';
 const DEFAULT_REQUEST_SOURCE = REQUEST_SOURCE_JPOS;
-const KFUAD_DETAIL_BEANS_URL = 'http://kfuad.jd.com/platformApi/api/jingdou/detailBeans?lang=zh_CN';
+const KFUAD_DETAIL_BEANS_URL = 'https://kfuad.jd.com/platformApi/api/jingdou/detailBeans?lang=zh_CN';
 const KFUAD_QUERY_PAGE_SIZE = 20;
 const KFUAD_QUERY_MAX_PAGES = 50;
 const KFUAD_PAGINATION_CONCURRENCY = 4;
@@ -50,6 +50,7 @@ function createInitialState() {
   columnFilters: {},
   filterPopoverCol: null,
   filterPopoverSelected: null,
-  filterPopoverEntries: null
+  filterPopoverEntries: null,
+  filterPopoverVisibleValues: null
 };
 }
