@@ -42,72 +42,53 @@ async function runBatch() {
     updateButtons();
     return;
   }
-  const uniqueAccounts = countUniqueRunnableAccounts(rowsForRun, accountCol);
-  log(`开始查询：${state.sourceContext ? formatSourceContextForLog(state.sourceContext) : `${rowsForRun.length} 条`}｜账号 ${uniqueAccounts} 个｜并发 ${BEAN_QUERY_CONCURRENCY}`);
+  const work = buildAccountWorkItems(rowsForRun, accountCol, eventCol);
+  const requestTemplate = createBeanListRequestTemplate(form);
+  log(`开始查询：${state.sourceContext ? formatSourceContextForLog(state.sourceContext) : `${rowsForRun.length} 条`}｜账号 ${work.groups.length} 个｜并发 ${BEAN_QUERY_CONCURRENCY}`);
 
   let renderedSinceYield = 0;
-  const processRow = async (inputRow, index) => {
-    if (state.stopped) return;
-    const account = clean(inputRow[accountCol]);
-    const eventNo = clean(inputRow[eventCol]);
-    const trackerName = getTrackerNameFromRow(inputRow);
-    const trackerErp = getTrackerErpFromRow(inputRow);
-    const creator = getRowValueByCandidates(inputRow, CREATOR_COL_CANDIDATES);
+  const noteRendered = async (count = 1) => {
+    renderedSinceYield += count;
+    if (renderedSinceYield < UI_YIELD_EVERY_ROWS) return;
+    renderedSinceYield = 0;
+    flushResultsNow();
+    await yieldToBrowser();
+  };
 
-    if (shouldIgnoreCreator(creator)) {
-      state.stats.skipped++;
-      renderStats();
-      appendResult({ status: '跳过', eventNo, trackerName, trackerErp, account, beanCreateTime: '', detail: '无需查询' });
-      await yieldAfterResultBatch(++renderedSinceYield);
-      return;
-    }
-    if (!account) {
-      state.stats.skipped++;
-      renderStats();
-      appendResult({ status: '跳过', eventNo, trackerName, trackerErp, account, beanCreateTime: '', detail: '客户账户为空' });
-      await yieldAfterResultBatch(++renderedSinceYield);
-      return;
-    }
+  for (const item of work.skipped) {
+    if (state.stopped) break;
+    state.stats.skipped++;
+    appendSkippedResultForRow(item.row, item.detail);
+    await noteRendered();
+  }
+  renderStats(true);
+
+  const processGroup = async (group, index) => {
+    if (state.stopped) return;
 
     try {
-      log(`查询中：${Math.min(state.stats.done + state.stats.skipped + state.stats.error + 1, rowsForRun.length)}/${rowsForRun.length}`);
-      const matches = await queryAllBeanPagesCached(form, account, keyword, timeRange);
+      log(`查询中：账号 ${index + 1}/${work.groups.length}｜行 ${Math.min(state.stats.done + state.stats.skipped + 1, rowsForRun.length)}/${rowsForRun.length}`);
+      const matches = await queryAllBeanPagesCached(requestTemplate, group.account, keyword, timeRange);
       if (state.stopped) return;
-      state.stats.done++;
+      state.stats.done += group.rows.length;
       if (matches.length) {
-        state.stats.hit += matches.length;
-        for (const m of matches) {
-          appendResult({
-            status: '命中',
-            eventNo,
-            trackerName, trackerErp,
-            account,
-            beanCreateTime: m.createTime,
-            beanAmount: m.amount,
-            businessNo: m.businessNo,
-            businessNo1: m.businessNo1,
-            activityId: m.activityId,
-            activityName: m.activityName,
-            detail: m.detail,
-            sourceLink: m.sourceLink
-          });
-        }
+        state.stats.hit += matches.length * group.rows.length;
+        await noteRendered(appendMatchResultsForRows(group.rows, matches));
       } else {
-        state.stats.noHit++;
-        appendResult({ status: '未命中', eventNo, trackerName, trackerErp, account, beanCreateTime: '', detail: NO_BEAN_RECORD_DETAIL });
+        state.stats.noHit += group.rows.length;
+        await noteRendered(appendNoHitResultsForRows(group.rows));
       }
     } catch (err) {
-      state.stats.done++;
-      state.stats.error++;
-      appendResult({ status: '异常', eventNo, trackerName, trackerErp, account, beanCreateTime: '', detail: err.message || String(err) });
-      console.debug('[京豆查询工具] 查询异常：', account, err);
+      state.stats.done += group.rows.length;
+      state.stats.error += group.rows.length;
+      await noteRendered(appendErrorResultsForRows(group.rows, err));
+      console.debug('[京豆查询工具] 查询异常：', group.account, err);
     }
     renderStats();
-    await yieldAfterResultBatch(++renderedSinceYield);
   };
 
   try {
-    await runConcurrentTasks(rowsForRun, BEAN_QUERY_CONCURRENCY, processRow);
+    await runConcurrentTasks(work.groups, BEAN_QUERY_CONCURRENCY, processGroup);
   } finally {
     flushResultsNow();
     await yieldToBrowser();
@@ -120,13 +101,124 @@ async function runBatch() {
   }
 }
 
-function countUniqueRunnableAccounts(rows, accountCol) {
-  const set = new Set();
-  for (const row of rows || []) {
-    const account = clean(row && row[accountCol]);
-    if (account) set.add(account);
+function buildAccountWorkItems(rows, accountCol, eventCol) {
+  const skipped = [];
+  const groupByAccount = new Map();
+
+  for (const inputRow of rows || []) {
+    const row = createQueryRowContext(inputRow, accountCol, eventCol);
+    const skipDetail = getQueryRowSkipDetail(row);
+    if (skipDetail) {
+      skipped.push({ row, detail: skipDetail });
+      continue;
+    }
+
+    let group = groupByAccount.get(row.account);
+    if (!group) {
+      group = { account: row.account, rows: [] };
+      groupByAccount.set(row.account, group);
+    }
+    group.rows.push(row);
   }
-  return set.size;
+
+  return {
+    skipped,
+    groups: Array.from(groupByAccount.values())
+  };
+}
+
+function createQueryRowContext(inputRow, accountCol, eventCol) {
+  return {
+    account: clean(inputRow[accountCol]),
+    eventNo: clean(inputRow[eventCol]),
+    trackerName: getTrackerNameFromRow(inputRow),
+    trackerErp: getTrackerErpFromRow(inputRow),
+    creator: getRowValueByCandidates(inputRow, CREATOR_COL_CANDIDATES)
+  };
+}
+
+function getQueryRowSkipDetail(row) {
+  if (shouldIgnoreCreator(row.creator)) return '无需查询';
+  if (!row.account) return '客户账户为空';
+  return '';
+}
+
+function appendSkippedResultForRow(row, detail) {
+  appendResult({
+    status: '跳过',
+    eventNo: row.eventNo,
+    trackerName: row.trackerName,
+    trackerErp: row.trackerErp,
+    account: row.account,
+    beanCreateTime: '',
+    detail
+  });
+}
+
+function appendNoHitResultsForRows(rows) {
+  for (const row of rows) {
+    appendResult({
+      status: '未命中',
+      eventNo: row.eventNo,
+      trackerName: row.trackerName,
+      trackerErp: row.trackerErp,
+      account: row.account,
+      beanCreateTime: '',
+      detail: NO_BEAN_RECORD_DETAIL
+    });
+  }
+  return rows.length;
+}
+
+function appendErrorResultsForRows(rows, err) {
+  const detail = err && err.message ? err.message : String(err);
+  for (const row of rows) {
+    appendResult({
+      status: '异常',
+      eventNo: row.eventNo,
+      trackerName: row.trackerName,
+      trackerErp: row.trackerErp,
+      account: row.account,
+      beanCreateTime: '',
+      detail
+    });
+  }
+  return rows.length;
+}
+
+function appendMatchResultsForRows(rows, matches) {
+  let count = 0;
+  for (const row of rows) {
+    for (const m of matches) {
+      appendResult({
+        status: '命中',
+        eventNo: row.eventNo,
+        trackerName: row.trackerName,
+        trackerErp: row.trackerErp,
+        account: row.account,
+        beanCreateTime: m.createTime,
+        beanAmount: m.amount,
+        businessNo: m.businessNo,
+        businessNo1: m.businessNo1,
+        activityId: m.activityId,
+        activityName: m.activityName,
+        detail: m.detail,
+        sourceLink: m.sourceLink
+      });
+      count++;
+    }
+  }
+  return count;
+}
+
+function createBeanListRequestTemplate(form) {
+  const action = form.action || new URL('/tool/beanList', location.origin).href;
+  const params = new URLSearchParams();
+  const fd = new FormData(form);
+  for (const [key, val] of fd.entries()) {
+    if (typeof val === 'string') params.append(key, val);
+  }
+  return { action, params };
 }
 
 function buildBeanQueryCacheKey(account, keyword, timeRange) {
@@ -135,11 +227,11 @@ function buildBeanQueryCacheKey(account, keyword, timeRange) {
   return `${clean(account)}|${clean(keyword)}|${start}|${end}`;
 }
 
-async function queryAllBeanPagesCached(form, account, keyword, timeRange) {
+async function queryAllBeanPagesCached(requestTemplate, account, keyword, timeRange) {
   if (!state.beanQueryCache) state.beanQueryCache = new Map();
   const key = buildBeanQueryCacheKey(account, keyword, timeRange);
   if (state.beanQueryCache.has(key)) return state.beanQueryCache.get(key);
-  const promise = queryAllBeanPages(form, account, keyword, timeRange);
+  const promise = queryAllBeanPages(requestTemplate, account, keyword, timeRange);
   promise.catch(() => {
     if (state.beanQueryCache.get(key) === promise) state.beanQueryCache.delete(key);
   });
@@ -147,8 +239,8 @@ async function queryAllBeanPagesCached(form, account, keyword, timeRange) {
   return promise;
 }
 
-async function queryAllBeanPages(form, account, keyword, timeRange) {
-  const firstHtml = await queryBeanList(form, account, 1);
+async function queryAllBeanPages(requestTemplate, account, keyword, timeRange) {
+  const firstHtml = await queryBeanList(requestTemplate, account, 1);
   const matches = extractBeanMatches(firstHtml, keyword, timeRange);
   const totalPages = getTotalPages(firstHtml);
   const maxPages = Math.min(totalPages, BEAN_QUERY_MAX_PAGES);
@@ -165,7 +257,7 @@ async function queryAllBeanPages(form, account, keyword, timeRange) {
     for (let i = 0; i < batchSize && nextPage <= maxPages; i++, nextPage++) {
       batchPages.push(nextPage);
     }
-    const results = await Promise.all(batchPages.map(page => queryBeanList(form, account, page).then(html => ({ page, html }))));
+    const results = await Promise.all(batchPages.map(page => queryBeanList(requestTemplate, account, page).then(html => ({ page, html }))));
     results.sort((a, b) => a.page - b.page);
     let earlyStop = false;
     for (const { html } of results) {
@@ -179,16 +271,11 @@ async function queryAllBeanPages(form, account, keyword, timeRange) {
   return matches;
 }
 
-async function queryBeanList(form, account, pageIndex = 1) {
-  const action = form.action || new URL('/tool/beanList', location.origin).href;
-  const fd = new FormData(form);
-  fd.set('pin', account);
-  fd.set('pageIndex', String(pageIndex));
-
-  const body = new URLSearchParams();
-  for (const [key, val] of fd.entries()) {
-    if (typeof val === 'string') body.append(key, val);
-  }
+async function queryBeanList(requestTemplate, account, pageIndex = 1) {
+  const action = requestTemplate.action;
+  const body = new URLSearchParams(requestTemplate.params);
+  body.set('pin', account);
+  body.set('pageIndex', String(pageIndex));
   const bodyString = body.toString();
 
   return runWithRetry(async () => {

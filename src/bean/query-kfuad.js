@@ -35,72 +35,52 @@ async function runBatchKfuad() {
     updateButtons();
     return;
   }
-  const uniqueAccounts = countUniqueRunnableAccounts(rowsForRun, accountCol);
-  log(`开始查询(kfuad)：${state.sourceContext ? formatSourceContextForLog(state.sourceContext) : `${rowsForRun.length} 条`}｜账号 ${uniqueAccounts} 个｜并发 ${BEAN_QUERY_CONCURRENCY}`);
+  const work = buildAccountWorkItems(rowsForRun, accountCol, eventCol);
+  log(`开始查询(kfuad)：${state.sourceContext ? formatSourceContextForLog(state.sourceContext) : `${rowsForRun.length} 条`}｜账号 ${work.groups.length} 个｜并发 ${BEAN_QUERY_CONCURRENCY}｜分页并发 ${KFUAD_PAGINATION_CONCURRENCY}`);
 
   let renderedSinceYield = 0;
-  const processRow = async (inputRow) => {
-    if (state.stopped) return;
-    const account = clean(inputRow[accountCol]);
-    const eventNo = clean(inputRow[eventCol]);
-    const trackerName = getTrackerNameFromRow(inputRow);
-    const trackerErp = getTrackerErpFromRow(inputRow);
-    const creator = getRowValueByCandidates(inputRow, CREATOR_COL_CANDIDATES);
+  const noteRendered = async (count = 1) => {
+    renderedSinceYield += count;
+    if (renderedSinceYield < UI_YIELD_EVERY_ROWS) return;
+    renderedSinceYield = 0;
+    flushResultsNow();
+    await yieldToBrowser();
+  };
 
-    if (shouldIgnoreCreator(creator)) {
-      state.stats.skipped++;
-      renderStats();
-      appendResult({ status: '跳过', eventNo, trackerName, trackerErp, account, beanCreateTime: '', detail: '无需查询' });
-      await yieldAfterResultBatch(++renderedSinceYield);
-      return;
-    }
-    if (!account) {
-      state.stats.skipped++;
-      renderStats();
-      appendResult({ status: '跳过', eventNo, trackerName, trackerErp, account, beanCreateTime: '', detail: '客户账户为空' });
-      await yieldAfterResultBatch(++renderedSinceYield);
-      return;
-    }
+  for (const item of work.skipped) {
+    if (state.stopped) break;
+    state.stats.skipped++;
+    appendSkippedResultForRow(item.row, item.detail);
+    await noteRendered();
+  }
+  renderStats(true);
+
+  const processGroup = async (group, index) => {
+    if (state.stopped) return;
 
     try {
-      log(`查询中(kfuad)：${Math.min(state.stats.done + state.stats.skipped + state.stats.error + 1, rowsForRun.length)}/${rowsForRun.length}`);
-      const matches = await queryAllKfuadPagesCached(account, keyword, timeRange);
+      log(`查询中(kfuad)：账号 ${index + 1}/${work.groups.length}｜行 ${Math.min(state.stats.done + state.stats.skipped + 1, rowsForRun.length)}/${rowsForRun.length}`);
+      const matches = await queryAllKfuadPagesCached(group.account, keyword, timeRange);
       if (state.stopped) return;
-      state.stats.done++;
+      state.stats.done += group.rows.length;
       if (matches.length) {
-        state.stats.hit += matches.length;
-        for (const m of matches) {
-          appendResult({
-            status: '命中',
-            eventNo,
-            trackerName, trackerErp,
-            account,
-            beanCreateTime: m.createTime,
-            beanAmount: m.amount,
-            businessNo: m.businessNo,
-            businessNo1: m.businessNo1,
-            activityId: m.activityId,
-            activityName: m.activityName,
-            detail: m.detail,
-            sourceLink: m.sourceLink
-          });
-        }
+        state.stats.hit += matches.length * group.rows.length;
+        await noteRendered(appendMatchResultsForRows(group.rows, matches));
       } else {
-        state.stats.noHit++;
-        appendResult({ status: '未命中', eventNo, trackerName, trackerErp, account, beanCreateTime: '', detail: NO_BEAN_RECORD_DETAIL });
+        state.stats.noHit += group.rows.length;
+        await noteRendered(appendNoHitResultsForRows(group.rows));
       }
     } catch (err) {
-      state.stats.done++;
-      state.stats.error++;
-      appendResult({ status: '异常', eventNo, trackerName, trackerErp, account, beanCreateTime: '', detail: err.message || String(err) });
-      console.debug('[京豆查询工具] kfuad 查询异常：', account, err);
+      state.stats.done += group.rows.length;
+      state.stats.error += group.rows.length;
+      await noteRendered(appendErrorResultsForRows(group.rows, err));
+      console.debug('[京豆查询工具] kfuad 查询异常：', group.account, err);
     }
     renderStats();
-    await yieldAfterResultBatch(++renderedSinceYield);
   };
 
   try {
-    await runConcurrentTasks(rowsForRun, BEAN_QUERY_CONCURRENCY, processRow);
+    await runConcurrentTasks(work.groups, BEAN_QUERY_CONCURRENCY, processGroup);
   } finally {
     flushResultsNow();
     await yieldToBrowser();
@@ -132,37 +112,66 @@ async function queryAllKfuadPagesCached(account, keyword, timeRange) {
 }
 
 async function queryAllKfuadPages(account, keyword, timeRange) {
-  const matches = [];
   const beginMs = timeRange.start.getTime();
   const endMs = timeRange.end.getTime();
-  const maxPages = KFUAD_QUERY_MAX_PAGES;
-  let page = 1;
-  while (page <= maxPages) {
+  const firstPayload = await queryKfuadDetailBeans(account, beginMs, endMs, 1, KFUAD_QUERY_PAGE_SIZE);
+  const firstPage = extractKfuadMatchesFromPayload(firstPayload, keyword, beginMs, endMs);
+  const pageResults = [{ page: 1, matches: firstPage.matches }];
+  const firstContent = Array.isArray(firstPayload?.content) ? firstPayload.content : [];
+  const firstTotalPages = Number(firstPayload?.totalPages || 0);
+  const maxPages = Math.min(firstTotalPages || KFUAD_QUERY_MAX_PAGES, KFUAD_QUERY_MAX_PAGES);
+  if (maxPages <= 1 || firstPage.earlyStop || Boolean(firstPayload?.last) || firstContent.length < KFUAD_QUERY_PAGE_SIZE) {
+    return firstPage.matches;
+  }
+
+  const batchSize = Math.max(1, KFUAD_PAGINATION_CONCURRENCY);
+  let nextPage = 2;
+  let stopAfterPage = Infinity;
+  while (nextPage <= maxPages && nextPage <= stopAfterPage) {
     if (state.stopped) break;
-    const payload = await queryKfuadDetailBeans(account, beginMs, endMs, page, KFUAD_QUERY_PAGE_SIZE);
-    const content = Array.isArray(payload?.content) ? payload.content : [];
-    let earlyStop = false;
-    for (const item of content) {
-      const createMs = Number(item?.createDate || 0);
-      const inRange = createMs >= beginMs && createMs <= endMs;
-      if (!inRange) {
-        if (createMs > 0 && createMs < beginMs) earlyStop = true;
-        continue;
-      }
-      const userVisibleInfo = clean(item?.userVisibleInfo);
-      const memo = clean(item?.memo);
-      if (!matchesBeanKeyword(userVisibleInfo, keyword) && !matchesBeanKeyword(memo, keyword)) continue;
-      matches.push(buildKfuadMatch(item));
+    const batchPages = [];
+    for (let i = 0; i < batchSize && nextPage <= maxPages; i++, nextPage++) {
+      batchPages.push(nextPage);
     }
-    const totalPages = Number(payload?.totalPages || 0);
-    const isLast = Boolean(payload?.last) || content.length < KFUAD_QUERY_PAGE_SIZE;
-    if (earlyStop || isLast) break;
-    if (totalPages > 0 && page >= totalPages) break;
-    page++;
+    const results = await Promise.all(batchPages.map(page => queryKfuadDetailBeans(account, beginMs, endMs, page, KFUAD_QUERY_PAGE_SIZE).then(payload => ({ page, payload }))));
+    results.sort((a, b) => a.page - b.page);
+    for (const { page, payload } of results) {
+      const extracted = extractKfuadMatchesFromPayload(payload, keyword, beginMs, endMs);
+      pageResults.push({ page, matches: extracted.matches });
+      const content = Array.isArray(payload?.content) ? payload.content : [];
+      const totalPages = Number(payload?.totalPages || 0);
+      const isLast = Boolean(payload?.last) || content.length < KFUAD_QUERY_PAGE_SIZE;
+      if (extracted.earlyStop || isLast || (totalPages > 0 && page >= totalPages)) {
+        stopAfterPage = Math.min(stopAfterPage, page);
+      }
+    }
     await yieldToBrowser();
   }
-  if (page > maxPages) console.debug('[京豆查询工具] kfuad 页数过多，已限制查询：', account, maxPages);
-  return matches;
+  if (firstTotalPages > KFUAD_QUERY_MAX_PAGES) console.debug('[京豆查询工具] kfuad 页数过多，已限制查询：', account, firstTotalPages, KFUAD_QUERY_MAX_PAGES);
+
+  return pageResults
+    .filter(item => item.page <= stopAfterPage)
+    .sort((a, b) => a.page - b.page)
+    .flatMap(item => item.matches);
+}
+
+function extractKfuadMatchesFromPayload(payload, keyword, beginMs, endMs) {
+  const matches = [];
+  let earlyStop = false;
+  const content = Array.isArray(payload?.content) ? payload.content : [];
+  for (const item of content) {
+    const createMs = Number(item?.createDate || 0);
+    const inRange = createMs >= beginMs && createMs <= endMs;
+    if (!inRange) {
+      if (createMs > 0 && createMs < beginMs) earlyStop = true;
+      continue;
+    }
+    const userVisibleInfo = clean(item?.userVisibleInfo);
+    const memo = clean(item?.memo);
+    if (!matchesBeanKeyword(userVisibleInfo, keyword) && !matchesBeanKeyword(memo, keyword)) continue;
+    matches.push(buildKfuadMatch(item));
+  }
+  return { matches, earlyStop };
 }
 
 function buildKfuadMatch(item) {
